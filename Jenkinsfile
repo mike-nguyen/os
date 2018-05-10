@@ -3,6 +3,7 @@ def DOCKER_ARGS = "--net=host -v /srv:/srv --privileged"
 
 // this var conveniently refers to a location on the server as well as the local dir we sync to/from
 def repo = "${env.ARTIFACT_SERVER_DIR}/repo"
+def rdgo  = "${env.ARTIFACT_SERVER_DIR}/rdgo"
 
 if (env.BUILD_TYPE != 'origin' && env.BUILD_TYPE != 'rhcos') {
     assert false
@@ -14,13 +15,25 @@ node(env.NODE) {
 
     docker.image(DOCKER_IMG).inside(DOCKER_ARGS) {
         stage("Provision") {
-            sh "dnf install -y git rpm-ostree rsync openssh-clients"
+            sh "dnf install -y git rpm-ostree rsync openssh-clients dnf-plugins-core dnf-plugins-core fedpkg"
             sh "cp RPM-GPG-* /etc/pki/rpm-gpg/"
+            sh "dnf copr -y enable walters/buildtools-fedora"
+            sh "dnf install -y rpmdistro-gitoverlay"
         }
 
         stage("Sync In") {
             withCredentials([sshUserPrivateKey(credentialsId: env['ARTIFACT_SSH_CREDS_ID'],
                                                keyFileVariable: 'KEY_FILE')]) {
+
+                sh """
+                    mkdir -p ${rdgo}
+                    rsync -Hrlpt --stats \
+                        -e 'ssh -i ${env.KEY_FILE} \
+                            -o UserKnownHostFiles=/dev/null \
+                           -o StrictHostKeyChecking=no' \
+                        ${env.ARTIFACT_SERVER}:${rdgo}/ ${rdgo}
+                """
+
                 sh """
                     # a few idempotent commands for bootstrapping
                     mkdir -p ${repo}
@@ -32,6 +45,32 @@ node(env.NODE) {
                                 -o StrictHostKeyChecking=no' \
                         ${env.ARTIFACT_SERVER}:${repo}/ ${repo}
                 """
+            }
+        }
+
+        stage("Build rdgo overlay packages") {
+            sh "ln -sf overlay.yml ${rdgo}"
+            dir("${rdgo}") {
+                if (!fileExists("src")) {
+                    sh "rpmdistro-gitoverlay init"
+                }
+                sh "rm rdgo.stamp"
+                sh "rpmdistro-gitoverlay resolve --fetch-all"
+                sh "rpmdistro-gitoverlay build --touch-if-changed rdgo.stamp --logdir=log"
+            }
+        }
+
+        stage("Sync out RDGO Builds") {
+            dir("${rdgo}") {
+                if (fileExists("rdgo.stamp")) {
+                    sh """
+                        rsync -Hrlpt --stats --delete --delete-after \
+                            -e 'ssh -i ${env.KEY_FILE} \
+                                    -o UserKnownHostsFile=/dev/null \
+                                    -o StrictHostKeyChecking=no' \
+                            ${rdgo}/ ${env.ARTIFACT_SERVER}:${rdgo}
+                    """
+                }
             }
         }
 
