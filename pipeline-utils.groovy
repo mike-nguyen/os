@@ -8,7 +8,7 @@
 def define_properties(timer) {
 
     // Set this to TRUE to disable the timer, and set DRY_RUN=true by default
-    def developmentPipeline = false;
+    def developmentPipeline = true;
 
     if (developmentPipeline)
       timer = null;
