@@ -1,7 +1,7 @@
 rojig:
   license: MIT
   name: rhcos
-  summary: OpenShift 4
+  summary: OpenShift 45
 
 # We inherit from Fedora CoreOS' base configuration
 include:
